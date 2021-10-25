@@ -1,0 +1,12 @@
+{
+    "compilerOptions": {
+        "sourceMap": true,
+        "target": "ES2019",
+        "module": "CommonJS",
+        "moduleResolution": "Node",
+        "outDir": "dist"
+    },
+    "include": [
+        "src"
+    ]
+}

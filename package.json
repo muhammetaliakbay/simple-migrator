@@ -1,0 +1,29 @@
+{
+    "name": "simple-migrator",
+    "version": "0.0.0",
+    "license": "Apache-2.0",
+    "bin": {
+        "migrator": "dist/main.js"
+    },
+    "scripts": {
+        "build": "tsc",
+        "build-watch": "yarn build -w",
+        "prepack": "yarn build",
+        "mark-executable": "chmod +x dist/main.js"
+    },
+    "files": [
+        "dist"
+    ],
+    "dependencies": {
+        "yargs": "^17.2.1",
+        "glob": "^7.2.0",
+        "pg": "^8.7.1"
+    },
+    "devDependencies": {
+        "typescript": "^4.4.4",
+        "@types/node": "^16.11.4",
+        "@types/yargs": "^17.0.4",
+        "@types/glob": "^7.2.0",
+        "@types/pg": "^8.6.1"
+    }
+}
