@@ -71,9 +71,17 @@ export class ScriptManager {
             }
         }
 
-        return paths.map(
+        paths = paths.map(
             path => relative(this.rootDir, path)
         )
+
+        if (caller != undefined) {
+            paths = paths.filter(
+                path => path != caller
+            )
+        }
+
+        return paths
     }
 
     load(path: string): Promise<Script> {

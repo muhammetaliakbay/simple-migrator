@@ -11,7 +11,7 @@ export class CompileExecutor extends BaseExecutor {
         this.parts.push(
             [
                 `-- ${script.path}`,
-                script.content
+                script.migration()
             ].join('\r\n\r\n')
         )
     }

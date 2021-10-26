@@ -7,12 +7,13 @@ import { readFile } from 'fs/promises'
 import { ScriptManager } from './script-manager'
 import { Executor } from './executor'
 
-import { hasMagic, sync } from "glob"
-import { join, relative } from "path"
-import { NoopExecutor } from './noop-executor'
+import { join } from "path"
 import { CompileExecutor } from './compile-executor'
-import { Client, Pool } from 'pg'
-import { PGExecutor } from './pg-executor'
+import { Pool } from 'pg'
+import { PGMigrator } from './pg-migrator'
+import { Script } from './script'
+import { OrderResolver } from './order-resolver'
+import { DependencyResolver } from './dependency-resolver'
 
 interface Connection {
     host: string,
@@ -74,26 +75,30 @@ async function parseConfig(path: string): Promise<Config> {
 }
 
 let manager: ScriptManager
+let dependencyResolver: DependencyResolver
 let config: Config
 
-async function execute(executor: Executor, identifiers: string[]): Promise<void> {
-    identifiers = identifiers.flatMap(
-        identifier => {
-            if (hasMagic(identifier)) {
-                return sync(join(executor.manager.rootDir, identifier)).map(
-                    path => relative(executor.manager.rootDir, path)
-                )
-            } else {
-                return [identifier]
-            }
-        }
-    )
-
+async function resolve(identifiers: string[]): Promise<{
+    order: OrderResolver
+}> {
+    const scripts: Script[] = []
     for (const identifier of identifiers) {
-        for (const path of await executor.manager.resolve(identifier)) {
-            const script = await executor.manager.load(path);
-            await script.execute(executor)
+        const paths = await manager.resolve(identifier)
+        for (const path of paths) {
+            scripts.push(
+                await manager.load(path)
+            )
         }
+    }
+
+    const order = new OrderResolver(dependencyResolver)
+
+    for (const script of scripts) {
+        await order.resolveOrder(script)
+    }
+
+    return {
+        order
     }
 }
 
@@ -106,6 +111,7 @@ yargs(hideBin(process.argv))
                 rootDir
             } = config = await parseConfig(configObject)
             manager = new ScriptManager(rootDir)
+            dependencyResolver = new DependencyResolver(manager)
         }
     )
     .command(
@@ -117,11 +123,24 @@ yargs(hideBin(process.argv))
         }
     )
     .command(
+        'calculate [identifiers...]', 'calculate execution steps for identifiers',
+        args => args.array('identifiers').string('identifiers'), async ({identifiers}) => {
+            const { order } = await resolve(identifiers)
+
+            for (const script of order) {
+                console.log('-', script.path)
+            }
+        }
+    )
+    .command(
         'compile [identifiers...]', 'compile execution steps for identifiers',
         args => args.array('identifiers').string('identifiers'), async ({identifiers}) => {
-            const executor = new CompileExecutor(manager)
-            await execute(executor, identifiers)
+            const { order } = await resolve(identifiers)
 
+            const executor = new CompileExecutor(manager)
+            for (const script of order) {
+                await executor.execute(script)
+            }
             const compiled = executor.compile()
 
             await new Promise<void>(
@@ -141,19 +160,8 @@ yargs(hideBin(process.argv))
         }
     )
     .command(
-        'calculate [identifiers...]', 'calculate execution steps for identifiers',
-        args => args.array('identifiers').string('identifiers'), async ({identifiers}) => {
-            const executor = new NoopExecutor(manager)
-            await execute(executor, identifiers)
-
-            for (const script of executor.executionOrder) {
-                console.log('-', script.path)
-            }
-        }
-    )
-    .command(
         'migrate <connection> [identifiers...]', 'migrate execution steps for identifiers',
-        args => args.string('connection').array('identifiers').string('identifiers'), async ({identifiers, connection: connName}) => {
+        args => args.boolean('dry-run').alias('dry-run', 'd').string('connection').array('identifiers').string('identifiers'), async ({identifiers, connection: connName, "dry-run": dryRun}) => {
             try {
                 const connection = config.connections[connName]
                 if (connection == undefined) {
@@ -168,18 +176,26 @@ yargs(hideBin(process.argv))
                     password: connection.password,
                 })
 
-                const executor = new PGExecutor(manager, pool)
+                const migrator = new PGMigrator(dependencyResolver, pool)
 
-                console.log('Setting up executor...')
-                await executor.setup()
+                console.log('Setting up migrator...')
+                await migrator.setup()
 
-                console.log('Collecting migration scripts...')
-                await execute(executor, identifiers)
+                console.log('Calculating migration steps...');
+                const { order } = await resolve(identifiers)
+                const steps = await migrator.calculate(order)
 
-                console.log('Migrating scripts...')
-                await executor.migrate()
+                if (dryRun) {
+                    console.log(`Required ${steps.length} step(s)`)
+                    for (const step of steps) {
+                        console.log('-', step)
+                    }
+                } else {
+                    console.log('Migrating scripts...')
+                    await migrator.execute(steps)
+                    console.log('Done')
+                }
 
-                console.log('Done')
                 process.exit(0)
             } catch (err) {
                 console.error(err)
